@@ -8,6 +8,11 @@
 #include <zmk/events/keycode_state_changed.h>
 #include <zmk/event_manager.h>
 #include <zmk/hid.h>
+#if IS_ENABLED(CONFIG_ZMK_HID_INDICATORS)
+#include <zmk/hid_indicators.h>
+#include <zmk/events/hid_indicators_changed.h>
+#define CAPS_LOCK_BIT BIT(1) // HID LED usage 0x02 (Caps Lock) -> bit 1
+#endif
 #include <dt-bindings/zmk/hid_usage.h>
 #include <dt-bindings/zmk/hid_usage_pages.h>
 
@@ -32,6 +37,7 @@ static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 
 struct modifier_state {
     bool mods[4];
+    bool caps_lock;
 #ifdef CONFIG_DT_HAS_ZMK_BEHAVIOR_CAPS_WORD_ENABLED
     bool caps_word;
 #endif
@@ -105,6 +111,18 @@ static void modifier_update_cb(struct modifier_state state) {
             enum modifier_type type = modifier_order_get(i);
             bool active = state.mods[type];
             bool is_win_icon = is_windows && type == MOD_TYPE_GUI;
+            if (type == MOD_TYPE_SHIFT) {
+                bool uses_symbols = modifier_order_uses_symbols();
+                if (state.caps_lock) {
+                    lv_label_set_text(widget->mod_labels[i],
+                                      uses_symbols ? SYMBOL_CAPS_LOCK : "CAPS");
+                    set_modifier_visible(widget->mod_labels[i], grid_rows[i], true, false);
+                    continue;
+                }
+                // Restore the normal Shift label after Caps Lock turns off
+                lv_label_set_text(widget->mod_labels[i], uses_symbols ? modifier_order_get_symbol(i)
+                                                                      : modifier_order_get_text(i));
+            }
 #ifdef CONFIG_DT_HAS_ZMK_BEHAVIOR_CAPS_WORD_ENABLED
             if (type == MOD_TYPE_SHIFT) {
                 if (state.caps_word) {
@@ -146,12 +164,20 @@ static struct modifier_state modifier_indicator_get_state(const zmk_event_t *eh)
     state.mods[MOD_TYPE_CTRL] = (mods & (MOD_LCTL | MOD_RCTL)) != 0;
     state.mods[MOD_TYPE_SHIFT] = (mods & (MOD_LSFT | MOD_RSFT)) != 0;
 
+#if IS_ENABLED(CONFIG_ZMK_HID_INDICATORS)
+    state.caps_lock = (zmk_hid_indicators_get_current_profile() & CAPS_LOCK_BIT) != 0;
+#endif
+
     return state;
 }
 
 ZMK_DISPLAY_WIDGET_LISTENER(widget_modifier_indicator, struct modifier_state,
                             modifier_update_cb, modifier_indicator_get_state)
 ZMK_SUBSCRIPTION(widget_modifier_indicator, zmk_keycode_state_changed);
+
+#if IS_ENABLED(CONFIG_ZMK_HID_INDICATORS)
+ZMK_SUBSCRIPTION(widget_modifier_indicator, zmk_hid_indicators_changed);
+#endif
 
 #ifdef CONFIG_DT_HAS_ZMK_BEHAVIOR_CAPS_WORD_ENABLED
 ZMK_SUBSCRIPTION(widget_modifier_indicator, zmk_caps_word_state_changed);
